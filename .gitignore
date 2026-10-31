@@ -1,0 +1,12 @@
+# data and environments
+dataset/
+.venv/
+
+# python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# training artifacts
+outputs/
+*.pt

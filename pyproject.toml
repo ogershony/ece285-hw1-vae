@@ -1,0 +1,9 @@
+[project]
+name = "VAE_Implementation"
+version = "0.1.0"
+
+dependencies = [
+    "torch==2.11.0",
+    "torchvision==0.26.0",
+    "pytorch-ignite>=0.5"
+]
