@@ -25,34 +25,14 @@
 \maketitle
 
 \begin{abstract}
-We implement a convolutional variational autoencoder (VAE) in PyTorch and train it on the
-pneumonia subset of the Kaggle chest X-ray dataset. We report the hyperparameters, the training
-loss curve, Inception Score (IS) and Fr\'echet Inception Distance (FID) of the generated images
-computed with PyTorch-Ignite, and qualitative samples. The model reaches an FID of \FID{} and an
-IS of \IS{} against the test set.
+We implement a convolutional variational autoencoder (VAE)~\cite{kingma2014} in PyTorch and train it on the
+pneumonia subset of the Kaggle chest X-ray dataset. We report hyperparameters, the loss curve,
+Inception Score (IS) and Fr\'echet Inception Distance (FID) via PyTorch-Ignite, and samples. The model reaches an FID of \FID{} against
+the test set (real held-out training images score \FIDRealRef{}, uniform noise \FIDNoiseRef{}) and an
+IS of \IS{}.
 \end{abstract}
 
-\section{Method}
-
-\paragraph{Model.}
-A VAE~\cite{kingma2014} learns an encoder $q_\phi(z \mid x)$ and a decoder $p_\theta(x \mid z)$
-with a standard-normal prior on a latent $z \in \mathbb{R}^{128}$. The encoder is a four-layer
-strided convolutional network ($4{\times}4$ kernels, stride 2, padding 1) with channel widths
-32--64--128--256, BatchNorm after every convolution except the first, and LeakyReLU(0.2)
-activations. It maps a $1{\times}64{\times}64$ image to a $256{\times}4{\times}4$ feature map, which
-two linear heads turn into $\mu$ and $\log\sigma^2$. Sampling uses the reparameterisation
-$z = \mu + \sigma \odot \epsilon$, $\epsilon \sim \mathcal{N}(0, I)$. The decoder mirrors the
-encoder: a linear layer to $256{\times}4{\times}4$, then four transposed convolutions
-(256--128--64--32--1) with BatchNorm and ReLU, ending in a sigmoid so outputs lie in $[0,1]$.
-The full model has 2.96M parameters (1.74M encoder, 1.22M decoder).
-
-\paragraph{Objective.}
-We minimise the negative evidence lower bound, summed over pixels and the batch:
-\begin{equation}
-\mathcal{L} = \underbrace{\sum_i \mathrm{BCE}(\hat{x}_i, x_i)}_{\text{reconstruction}}
-\;+\; \underbrace{-\tfrac{1}{2}\sum_j \big(1 + \log\sigma_j^2 - \mu_j^2 - \sigma_j^2\big)}_{\text{KL to } \mathcal{N}(0,I)} .
-\end{equation}
-BCE is appropriate since inputs are in $[0,1]$ and the decoder is sigmoid-bounded.
+\section{Setup}
 
 \paragraph{Data.}
 We use the chest X-ray pneumonia dataset~\cite{kermany2018}. The repository contains the
@@ -61,64 +41,67 @@ converted to a single grey channel, resized to $64{\times}64$ for compute reason
 $[0,1]$. No augmentation is used. All code (\texttt{VAE/}, \texttt{train.py}, \texttt{eval\_model.py},
 \texttt{data.py}, \texttt{main.py}, \texttt{train\_gpu.sbatch}) is submitted with this report.
 
-\section{Hyperparameters}
-
-Table~\ref{tab:hparams} lists every setting; training ran on one \Device{} GPU.
-
-\begin{table}[h]
-  \centering
-  \small
-  \vspace{-4pt}
-  \begin{tabular}{ll}
-    \toprule
-    Setting & Value \\
-    \midrule
-    Input resolution & $64{\times}64$, 1 channel \\
-    Latent dimension & 128 \\
-    Optimiser & Adam, learning rate $10^{-3}$, default $\beta$ \\
-    Batch size & 32 \\
-    Epochs & \NumEpochs \\
-    Loss & BCE (sum) $+$ KL, equal weight ($\beta = 1$) \\
-    Normalisation / activations & BatchNorm; LeakyReLU(0.2) encoder, ReLU decoder \\
-    Data loading & 8 workers, shuffled every epoch \\
-    \bottomrule
-  \end{tabular}
-  \caption{Hyperparameter settings.}
-  \label{tab:hparams}
-  \vspace{-8pt}
-\end{table}
+Table~\ref{tab:hparams} lists every setting; training ran on one NVIDIA \Device{} GPU.
+Evaluation results are in Table~\ref{tab:metrics}.
 
 \section{Results}
 
 \paragraph{Training loss.}
 Figure~\ref{fig:loss} shows the per-image training loss (reconstruction plus KL) over
 \NumEpochs{} epochs. The loss falls from \InitLoss{} after the first epoch to \FinalLoss{} at
-the end, with a minimum of \MinLoss{} at epoch \MinLossEpoch.
+the end, with a minimum of \MinLoss{} at epoch \MinLossEpoch. About \LossDropTenPct\% of the decrease
+happens in the first ten epochs; the loss is dominated by the reconstruction term.
 
 \paragraph{Inception Score and FID.}
-Following the PyTorch-Ignite GAN-evaluation recipe, we draw $z \sim \mathcal{N}(0, I)$, decode
-one fake image for every real test image, and update Ignite's \texttt{FID} and
-\texttt{InceptionScore} metrics batch by batch. Both metrics use the ImageNet-pretrained
-Inception-v3 network, so the single grey channel is replicated to three channels and the
-$64{\times}64$ images are bilinearly upsampled to $299{\times}299$ before feature extraction.
-Table~\ref{tab:metrics} reports the scores. The IS is near its lower bound of 1, as expected:
-ImageNet Inception assigns nearly the same class distribution to every chest X-ray, real or
-generated. FID, which compares feature statistics of generated and real images directly, is the
-more informative number here.
+Following the PyTorch-Ignite recipe~\cite{ignite}, we decode one sample $z \sim \mathcal{N}(0, I)$
+per real test image and update Ignite's \texttt{FID} and \texttt{InceptionScore} batch by batch.
+Images are replicated to three channels and upsampled to $299{\times}299$ for the ImageNet
+Inception-v3. FID uses the standard 2048-d pool features; Ignite's default \texttt{FID()} instead
+uses the 1000-d softmax outputs, giving a meaningless \FIDSoftmax{} here, so we pass the
+pool-feature extractor explicitly. For context, Table~\ref{tab:metrics} also scores \NumTest{} real
+training images (\FIDRealRef, roughly the floor at this sample size) and uniform noise
+(\FIDNoiseRef) against the test set. Our \FID{} lies about a third of the way from the real-data
+floor to noise, consistent with the blurry samples. IS is close to its lower bound of 1 because
+Inception assigns nearly the same class distribution to every chest X-ray, so FID is the more
+informative metric.
 
 \begin{table}[h]
   \centering
   \small
-  \begin{tabular}{lcc}
-    \toprule
-    Metric & Value & Better \\
-    \midrule
-    FID (vs.\ \NumTest{} test images) & \FID & lower \\
-    Inception Score & \IS & higher \\
-    \bottomrule
-  \end{tabular}
-  \caption{Evaluation of \NumTest{} generated samples with PyTorch-Ignite.}
-  \label{tab:metrics}
+  \begin{minipage}[t]{0.52\textwidth}
+    \centering
+    \begin{tabular}{@{}ll@{}}
+      \toprule
+      Setting & Value \\
+      \midrule
+      Input & $64{\times}64$, 1 channel \\
+      Latent dimension & 128 \\
+      Optimiser & Adam, lr $10^{-3}$, default $\beta$ \\
+      Batch size / epochs & 32 / \NumEpochs \\
+      Loss & BCE (sum) $+$ KL, weight 1 \\
+      Activations & LeakyReLU(0.2) enc., ReLU dec. \\
+      Normalisation & BatchNorm \\
+      Data loading & 8 workers, shuffled \\
+      \bottomrule
+    \end{tabular}
+    \caption{Hyperparameters.}
+    \label{tab:hparams}
+  \end{minipage}\hfill
+  \begin{minipage}[t]{0.45\textwidth}
+    \centering
+    \begin{tabular}{@{}lc@{}}
+      \toprule
+      Metric (vs.\ \NumTest{} test images) & Value \\
+      \midrule
+      FID $\downarrow$, VAE samples & \FID \\
+      \quad real training images & \FIDRealRef \\
+      \quad uniform noise & \FIDNoiseRef \\
+      IS $\uparrow$, VAE samples & \IS \\
+      \bottomrule
+    \end{tabular}
+    \caption{FID and IS (PyTorch-Ignite). Indented rows are reference points.}
+    \label{tab:metrics}
+  \end{minipage}
   \vspace{-8pt}
 \end{table}
 

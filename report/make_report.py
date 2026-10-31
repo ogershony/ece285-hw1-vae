@@ -20,7 +20,12 @@ if os.path.exists(res_path):
         "NumEpochs": str(len(losses)),
         "InitLoss": f"{per_img[0]:.1f}", "FinalLoss": f"{per_img[-1]:.1f}",
         "MinLoss": f"{min(per_img):.1f}", "MinLossEpoch": str(per_img.index(min(per_img)) + 1),
-        "Device": r["device"].replace("NVIDIA ", ""),
+        "Device": r["device"].replace("NVIDIA ", "").replace(" Max-Q Workstation Edition", "")
+                             .replace(" MIG 1g.24gb", " (1g.24gb MIG slice)"),
+        "FIDRealRef": f"{r['reference']['FID_real_train_vs_test']:.1f}" if "reference" in r else "--",
+        "FIDNoiseRef": f"{r['reference']['FID_noise_vs_test']:.1f}" if "reference" in r else "--",
+        "FIDSoftmax": f"{r['metrics_ignite_default_softmax_fid']['FID']:.3f}" if "metrics_ignite_default_softmax_fid" in r else "--",
+        "LossDropTenPct": f"{100 * (per_img[0] - per_img[9]) / (per_img[0] - per_img[-1]):.0f}",
     }
     # Loss curve: single series -> one hue, no legend, thin line, recessive grid
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
@@ -37,12 +42,22 @@ if os.path.exists(res_path):
     print("results.json found; filled real values")
 else:
     vals = dict(FID="--", IS="--", NumTrain="3875", NumTest="390", NumEpochs="100", InitLoss="--",
-                FinalLoss="--", MinLoss="--", MinLossEpoch="--", Device="RTX 2080 Ti")
+                FinalLoss="--", MinLoss="--", MinLossEpoch="--", Device="RTX 2080 Ti",
+                FIDRealRef="--", FIDNoiseRef="--", FIDSoftmax="--", LossDropTenPct="--")
     print("WARNING: outputs/results.json not found; using placeholders", file=sys.stderr)
 
 with open(os.path.join(REP, "results.tex"), "w") as f:
     for k, v in vals.items():
         f.write(f"\\newcommand{{\\{k}}}{{{v}}}\n")
 
-subprocess.run(["tectonic", "-X", "compile", "report.tex"], cwd=REP, check=True)
+import shutil
+if shutil.which("tectonic"):
+    subprocess.run(["tectonic", "-X", "compile", "report.tex"], cwd=REP, check=True)
+else:  # fall back to pdflatex; two passes resolve cross-references
+    for _ in range(2):
+        subprocess.run(["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "report.tex"],
+                       cwd=REP, check=True, stdout=subprocess.DEVNULL)
+    for ext in ("aux", "log", "out"):
+        p = os.path.join(REP, f"report.{ext}")
+        if os.path.exists(p): os.remove(p)
 print("built", os.path.join(REP, "report.pdf"))

@@ -11,6 +11,7 @@ matplotlib.use("Agg")  # headless backend (no display on cluster nodes)
 import matplotlib.pyplot as plt
 import torchvision.utils as vutils
 from ignite.metrics import FID, InceptionScore
+from ignite.metrics.gan.utils import InceptionModel
 
 def plot_loss(training_losses, output_name = "losses.png"):
     ''' Plot training losses '''
@@ -43,7 +44,11 @@ def eval_model(model, test_dataset, device="cuda", batch_size=32):
     model.eval()
     
     # Initialize PyTorch Ignite metrics
-    fid_metric = FID(device=device)
+    # Standard FID uses the 2048-d pool features of Inception-v3. Ignite's default FID() instead
+    # uses the 1000-d softmax class probabilities, which gives tiny, non-comparable values (~0.1).
+    fid_metric = FID(num_features=2048,
+                     feature_extractor=InceptionModel(return_features=True, device=device),
+                     device=device)
     is_metric = InceptionScore(device=device)
     
     fid_metric.reset()
