@@ -1,0 +1,156 @@
+\documentclass{article}
+\PassOptionsToPackage{numbers}{natbib}
+\usepackage[final]{neurips_2023}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\input{results}
+\makeatletter\renewcommand{\@noticestring}{ECE 285, Homework 1 (Fall 2026).}\makeatother
+
+\title{Generating Chest X-rays with a Convolutional Variational Autoencoder}
+
+\author{%
+  Oren Gershony \\
+  ECE 285, Homework 1 \\
+  \texttt{ogershony@gmail.com}
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We implement a convolutional variational autoencoder (VAE) in PyTorch and train it on the
+pneumonia subset of the Kaggle chest X-ray dataset. We report the hyperparameters, the training
+loss curve, Inception Score (IS) and Fr\'echet Inception Distance (FID) of the generated images
+computed with PyTorch-Ignite, and qualitative samples. The model reaches an FID of \FID{} and an
+IS of \IS{} against the test set.
+\end{abstract}
+
+\section{Method}
+
+\paragraph{Model.}
+A VAE~\cite{kingma2014} learns an encoder $q_\phi(z \mid x)$ and a decoder $p_\theta(x \mid z)$
+with a standard-normal prior on a latent $z \in \mathbb{R}^{128}$. The encoder is a four-layer
+strided convolutional network ($4{\times}4$ kernels, stride 2, padding 1) with channel widths
+32--64--128--256, BatchNorm after every convolution except the first, and LeakyReLU(0.2)
+activations. It maps a $1{\times}64{\times}64$ image to a $256{\times}4{\times}4$ feature map, which
+two linear heads turn into $\mu$ and $\log\sigma^2$. Sampling uses the reparameterisation
+$z = \mu + \sigma \odot \epsilon$, $\epsilon \sim \mathcal{N}(0, I)$. The decoder mirrors the
+encoder: a linear layer to $256{\times}4{\times}4$, then four transposed convolutions
+(256--128--64--32--1) with BatchNorm and ReLU, ending in a sigmoid so outputs lie in $[0,1]$.
+The full model has 2.96M parameters (1.74M encoder, 1.22M decoder).
+
+\paragraph{Objective.}
+We minimise the negative evidence lower bound, summed over pixels and the batch:
+\begin{equation}
+\mathcal{L} = \underbrace{\sum_i \mathrm{BCE}(\hat{x}_i, x_i)}_{\text{reconstruction}}
+\;+\; \underbrace{-\tfrac{1}{2}\sum_j \big(1 + \log\sigma_j^2 - \mu_j^2 - \sigma_j^2\big)}_{\text{KL to } \mathcal{N}(0,I)} .
+\end{equation}
+BCE is appropriate since inputs are in $[0,1]$ and the decoder is sigmoid-bounded.
+
+\paragraph{Data.}
+We use the chest X-ray pneumonia dataset~\cite{kermany2018}. The repository contains the
+\textsc{Pneumonia} class only: \NumTrain{} training and \NumTest{} test images. Each image is
+converted to a single grey channel, resized to $64{\times}64$ for compute reasons, and scaled to
+$[0,1]$. No augmentation is used. All code (\texttt{VAE/}, \texttt{train.py}, \texttt{eval\_model.py},
+\texttt{data.py}, \texttt{main.py}, \texttt{train\_gpu.sbatch}) is submitted with this report.
+
+\section{Hyperparameters}
+
+Table~\ref{tab:hparams} lists every setting; training ran on one \Device{} GPU.
+
+\begin{table}[h]
+  \centering
+  \small
+  \vspace{-4pt}
+  \begin{tabular}{ll}
+    \toprule
+    Setting & Value \\
+    \midrule
+    Input resolution & $64{\times}64$, 1 channel \\
+    Latent dimension & 128 \\
+    Optimiser & Adam, learning rate $10^{-3}$, default $\beta$ \\
+    Batch size & 32 \\
+    Epochs & \NumEpochs \\
+    Loss & BCE (sum) $+$ KL, equal weight ($\beta = 1$) \\
+    Normalisation / activations & BatchNorm; LeakyReLU(0.2) encoder, ReLU decoder \\
+    Data loading & 8 workers, shuffled every epoch \\
+    \bottomrule
+  \end{tabular}
+  \caption{Hyperparameter settings.}
+  \label{tab:hparams}
+  \vspace{-8pt}
+\end{table}
+
+\section{Results}
+
+\paragraph{Training loss.}
+Figure~\ref{fig:loss} shows the per-image training loss (reconstruction plus KL) over
+\NumEpochs{} epochs. The loss falls from \InitLoss{} after the first epoch to \FinalLoss{} at
+the end, with a minimum of \MinLoss{} at epoch \MinLossEpoch.
+
+\paragraph{Inception Score and FID.}
+Following the PyTorch-Ignite GAN-evaluation recipe, we draw $z \sim \mathcal{N}(0, I)$, decode
+one fake image for every real test image, and update Ignite's \texttt{FID} and
+\texttt{InceptionScore} metrics batch by batch. Both metrics use the ImageNet-pretrained
+Inception-v3 network, so the single grey channel is replicated to three channels and the
+$64{\times}64$ images are bilinearly upsampled to $299{\times}299$ before feature extraction.
+Table~\ref{tab:metrics} reports the scores. The IS is near its lower bound of 1, as expected:
+ImageNet Inception assigns nearly the same class distribution to every chest X-ray, real or
+generated. FID, which compares feature statistics of generated and real images directly, is the
+more informative number here.
+
+\begin{table}[h]
+  \centering
+  \small
+  \begin{tabular}{lcc}
+    \toprule
+    Metric & Value & Better \\
+    \midrule
+    FID (vs.\ \NumTest{} test images) & \FID & lower \\
+    Inception Score & \IS & higher \\
+    \bottomrule
+  \end{tabular}
+  \caption{Evaluation of \NumTest{} generated samples with PyTorch-Ignite.}
+  \label{tab:metrics}
+  \vspace{-8pt}
+\end{table}
+
+\begin{figure}[h]
+  \centering
+  \begin{minipage}[t]{0.46\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{loss_curve.pdf}
+    \caption{Training loss per image per epoch.}
+    \label{fig:loss}
+  \end{minipage}\hfill
+  \begin{minipage}[t]{0.46\textwidth}
+    \centering
+    \includegraphics[width=\linewidth]{generated_grid.png}
+    \caption{Sixteen samples decoded from $z \sim \mathcal{N}(0, I)$.}
+    \label{fig:samples}
+  \end{minipage}
+  \vspace{-6pt}
+\end{figure}
+
+\paragraph{Generated images.}
+Figure~\ref{fig:samples} shows sixteen random samples. The model captures the global anatomy
+of a frontal chest radiograph: the dark lung fields, the bright mediastinum and spine, and the
+shoulder and rib outline. As is typical of a VAE trained with a pixel-wise likelihood, the
+samples are blurry and lack fine detail such as individual ribs or vessel markings. Higher
+resolution, a perceptual reconstruction term, or a tempered KL weight are natural next steps.
+
+\begin{thebibliography}{9}
+\footnotesize
+\bibitem{kingma2014} D.~P. Kingma and M. Welling. Auto-encoding variational Bayes. \emph{ICLR}, 2014.
+\bibitem{kermany2018} D.~S. Kermany et al. Identifying medical diagnoses and treatable diseases by image-based deep learning. \emph{Cell}, 2018. \url{https://www.kaggle.com/paultimothymooney/chest-xray-pneumonia}.
+\bibitem{ignite} PyTorch-Ignite. GAN evaluation with FID and IS. \url{https://pytorch-ignite.ai/blog/gan-evaluation-with-fid-and-is/}.
+\end{thebibliography}
+
+\end{document}

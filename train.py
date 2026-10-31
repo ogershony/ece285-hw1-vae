@@ -8,9 +8,8 @@ def vae_loss(pred_image, image, mean, variance):
 
     return decoder_loss + encoder_loss
 
-def train(model, dataloader, device):
+def train(model, dataloader, device, num_epochs=100):
     lr = 1e-3
-    num_epochs = 100
 
     training_losses = []
     optimizer = Adam(model.parameters(), lr=lr)
@@ -31,6 +30,7 @@ def train(model, dataloader, device):
             total_loss += loss.item()
 
         training_losses.append(total_loss)
+        print(f"Epoch {i+1}/{num_epochs} - loss: {total_loss:.2f}")
 
     return model, training_losses
 
